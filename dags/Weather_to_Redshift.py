@@ -21,6 +21,7 @@ def get_Redshift_connection():
 
 def etl(**context):
     api_key = Variable.get("open_weather_api_key")
+    redshift_schema = Variable.get('redshift_schema')
     # 서울의 위도/경도
     lat = 37.5665
     lon = 126.9780
@@ -39,17 +40,42 @@ def etl(**context):
         ret.append("('{}',{},{},{})".format(day, d["temp"]["day"], d["temp"]["min"], d["temp"]["max"]))
 
     cur = get_Redshift_connection()
-    insert_sql = """DELETE FROM keeyong.weather_forecast;INSERT INTO keeyong.weather_forecast VALUES """ + ",".join(ret)
+    
+    # 임시 테이블 생성
+    create_sql = f"""BEGIN;DROP TABLE IF EXISTS {redshift_schema}.temp_weather_forecast;
+    CREATE TABLE {redshift_schema}.temp_weather_forecast AS SELECT * FROM {redshift_schema}.weather_forecast;"""
+    logging.info(create_sql)
+    try:
+        cur.execute(create_sql)
+        cur.execute("COMMIT;")
+    except Exception as e:
+        cur.execute("ROLLBACK;")
+
+    # 임시 테이블 데이터 입력
+    insert_sql = f"BEGIN;INSERT INTO {redshift_schema}.temp_weather_forecast VALUES " + ",".join(ret)
     logging.info(insert_sql)
     try:
         cur.execute(insert_sql)
-        cur.execute("Commit;")
+        cur.execute("COMMIT;")
     except Exception as e:
-        cur.execute("Rollback;")
+        cur.execute("ROLLBACK;")
+
+    # 기존 테이블 대체
+    alter_sql = f"""BEGIN;DELETE FROM {redshift_schema}.weather_forecast;
+    INSERT INTO pakddo.weather_forecast
+     SELECT date, temp, min_temp, max_temp FROM (
+     SELECT *, ROW_NUMBER() OVER (PARTITION BY date ORDER BY updated_date DESC) seq
+     FROM {redshift_schema}.temp_weather_forecast) temp WHERE seq = 1;"""
+    logging.info(alter_sql)
+    try:
+        cur.execute(alter_sql)
+        cur.execute("COMMIT;")
+    except Exception as e:
+        cur.execute("ROLLBACK;")
 
 
 """
-CREATE TABLE keeyong.weather_forecast (
+CREATE TABLE pakddo.weather_forecast (
     date date,
     temp float,
     min_temp float,
@@ -75,3 +101,4 @@ etl = PythonOperator(
     python_callable = etl,
     dag = dag
 )
+
