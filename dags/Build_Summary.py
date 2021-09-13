@@ -31,7 +31,7 @@ def execSQL(**context):
 
     cur = get_Redshift_connection()
 
-    sql += """DROP TABLE IF EXISTS {schema}.temp_{table};CREATE TABLE {schema}.temp_{table} AS """.format(schema=schema, table=table)
+    sql = """DROP TABLE IF EXISTS {schema}.temp_{table};CREATE TABLE {schema}.temp_{table} AS """.format(schema=schema, table=table)
     sql += select_sql
     cur.execute(sql)
 
